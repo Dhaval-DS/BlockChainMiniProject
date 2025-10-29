@@ -1,4 +1,4 @@
-# app.py (Modern UI with enhanced visuals)
+# app.py (Fixed logout functionality and auto-logout after voting)
 import streamlit as st
 import time
 import hashlib
@@ -65,6 +65,8 @@ if "logged_in_vid" not in st.session_state:
     st.session_state["logged_in_vid"] = None
 if "admin_authenticated" not in st.session_state:
     st.session_state["admin_authenticated"] = False
+if "vote_casted" not in st.session_state:
+    st.session_state["vote_casted"] = False
 
 # -----------------------
 # Load data
@@ -235,6 +237,22 @@ st.markdown("""
     .admin-button:hover {
         transform: translateY(-2px);
         box-shadow: 0 6px 20px rgba(255, 152, 0, 0.4);
+    }
+    
+    .logout-button {
+        background: linear-gradient(135deg, #f44336 0%, #d32f2f 100%);
+        color: white;
+        border: none;
+        border-radius: 8px;
+        padding: 0.5rem 1.5rem;
+        font-weight: 500;
+        transition: all 0.3s ease;
+        margin-top: 1rem;
+    }
+    
+    .logout-button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(244, 67, 54, 0.4);
     }
     
     .stProgress > div > div > div > div {
@@ -412,31 +430,46 @@ if role == "Voter":
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.subheader("🔐 Login & Vote")
         
-        with st.form("login_form"):
-            vid_login = st.text_input("Voter ID", key="login_vid", placeholder="Enter your voter ID")
-            pwd_login = st.text_input("Password", type="password", key="login_pwd", placeholder="Enter your password")
-            
-            login_submit = st.form_submit_button("Login", use_container_width=True)
-            
-            if login_submit:
-                if vid_login not in voters:
-                    st.markdown('<div class="error-message">Voter not registered</div>', unsafe_allow_html=True)
-                elif voters[vid_login]["password_hash"] != hash_password(pwd_login):
-                    st.markdown('<div class="error-message">Incorrect password</div>', unsafe_allow_html=True)
-                elif voters[vid_login].get("voted"):
-                    st.markdown('<div class="warning-message">You have already voted.</div>', unsafe_allow_html=True)
-                else:
-                    st.session_state["logged_in_vid"] = vid_login
-                    st.markdown(f'<div class="success-message">Welcome {voters[vid_login]["name"]}! Now pick a candidate and cast your vote.</div>', unsafe_allow_html=True)
+        # Check if user just voted and needs to be logged out
+        if st.session_state.get("vote_casted"):
+            st.session_state["logged_in_vid"] = None
+            st.session_state["vote_casted"] = False
+            st.rerun()
+        
+        if not st.session_state.get("logged_in_vid"):
+            with st.form("login_form"):
+                vid_login = st.text_input("Voter ID", key="login_vid", placeholder="Enter your voter ID")
+                pwd_login = st.text_input("Password", type="password", key="login_pwd", placeholder="Enter your password")
+                
+                login_submit = st.form_submit_button("Login", use_container_width=True)
+                
+                if login_submit:
+                    if vid_login not in voters:
+                        st.markdown('<div class="error-message">Voter not registered</div>', unsafe_allow_html=True)
+                    elif voters[vid_login]["password_hash"] != hash_password(pwd_login):
+                        st.markdown('<div class="error-message">Incorrect password</div>', unsafe_allow_html=True)
+                    elif voters[vid_login].get("voted"):
+                        st.markdown('<div class="warning-message">You have already voted. Each voter can only vote once.</div>', unsafe_allow_html=True)
+                    else:
+                        st.session_state["logged_in_vid"] = vid_login
+                        st.success(f"Welcome {voters[vid_login]['name']}! Now pick a candidate and cast your vote.")
+                        st.rerun()
 
         # Voting section (only if logged in)
         if st.session_state.get("logged_in_vid"):
             logged_vid = st.session_state["logged_in_vid"]
             st.markdown(f"""
             <div style="background: rgba(76, 175, 80, 0.1); border-radius: 8px; padding: 1rem; margin: 1rem 0;">
-                <p style="margin: 0; color: #4CAF50; font-weight: 500;">
-                    ✅ Logged in as: <strong>{logged_vid}</strong> — {voters[logged_vid]['name']}
-                </p>
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <p style="margin: 0; color: #4CAF50; font-weight: 500;">
+                            ✅ Logged in as: <strong>{logged_vid}</strong> — {voters[logged_vid]['name']}
+                        </p>
+                    </div>
+                    <div>
+                        <button class="logout-button" onclick="window.location.reload()">Logout</button>
+                    </div>
+                </div>
             </div>
             """, unsafe_allow_html=True)
             
@@ -465,6 +498,7 @@ if role == "Voter":
                     <div class="success-message">
                         <h4 style="margin-top: 0;">Vote Recorded Successfully! ✅</h4>
                         <p>Your vote has been recorded in block #{new_block.index} and added to the blockchain.</p>
+                        <p><strong>You will be automatically logged out now. Each voter can only vote once.</strong></p>
                     </div>
                     """, unsafe_allow_html=True)
                     
@@ -478,9 +512,22 @@ if role == "Voter":
                             "votes": new_block.votes
                         })
                     
+                    # Set flag to logout user and reload data
+                    st.session_state["vote_casted"] = True
+                    
                     # Reload blockchain data
                     reloaded = normalize_chain_data(load_json(CHAIN_PATH, None))
                     blockchain = SimpleBlockchain(reloaded)
+                    
+                    # Auto-refresh after vote
+                    st.rerun()
+            
+            # Manual logout button
+            if st.button("Logout", use_container_width=True, type="secondary"):
+                st.session_state["logged_in_vid"] = None
+                st.success("Logged out successfully!")
+                st.rerun()
+                
         st.markdown("</div>", unsafe_allow_html=True)
     
     # -----------------------
@@ -594,22 +641,18 @@ elif role == "Admin":
                     st.error("Incorrect admin password. Demo passwords: 'admin123' or 'admin@123'")
     
     else:
-        # Admin is authenticated
-        st.markdown(f"""
+        # Admin is authenticated - FIXED LOGOUT FUNCTIONALITY
+        st.markdown("""
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
             <div>
                 <h3 style="margin: 0;">Admin Controls</h3>
                 <p style="margin: 0; color: #9aa3b2;">Manage the voting system and view analytics</p>
             </div>
-            <div>
-                <button onclick="window.location.reload()" class="admin-button" style="background: rgba(244, 67, 54, 0.2); color: #f44336; border: 1px solid rgba(244, 67, 54, 0.3);">
-                    Sign Out
-                </button>
-            </div>
         </div>
         """, unsafe_allow_html=True)
         
-        if st.button("Sign Out", use_container_width=True):
+        # Fixed logout button
+        if st.button("Sign Out", use_container_width=True, type="secondary"):
             st.session_state["admin_authenticated"] = False
             st.success("Signed out successfully!")
             st.rerun()
