@@ -1,4 +1,4 @@
-# app.py (updated/debug-friendly)
+# app.py (fixed paths + admin form + safe candidates handling)
 import streamlit as st
 import time
 import hashlib
@@ -8,10 +8,11 @@ from storage import load_json, save_json
 from blockchain import SimpleBlockchain
 
 # -----------------------
-# file paths (edit if needed)
-CAND_PATH = "candidates.json"
-VOTER_PATH = "voters.json"
-CHAIN_PATH = "chain.json"
+# file paths (reliable)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CAND_PATH = os.path.join(BASE_DIR, "candidates.json")
+VOTER_PATH = os.path.join(BASE_DIR, "voters.json")
+CHAIN_PATH = os.path.join(BASE_DIR, "chain.json")
 
 # -----------------------
 # helpers
@@ -63,11 +64,20 @@ def tally_votes_from_chain(blockchain: SimpleBlockchain, candidates: List[Dict])
         # each block has .votes list of vote dicts
         for v in block.votes:
             cid = v.get("candidate")
+            if cid is None:
+                continue
             counts[cid] = counts.get(cid, 0) + 1
     # map candidate ids to names
     name_map = {c["id"]: c["name"] for c in candidates}
     pretty = { name_map.get(k, k): v for k,v in counts.items() }
     return pretty
+
+# -----------------------
+# ensure session state keys exist
+if "logged_in_vid" not in st.session_state:
+    st.session_state["logged_in_vid"] = None
+if "blockchain_loaded_len" not in st.session_state:
+    st.session_state["blockchain_loaded_len"] = 0
 
 # -----------------------
 # UI config
@@ -122,31 +132,34 @@ if role == "Voter":
         if st.session_state.get("logged_in_vid"):
             logged_vid = st.session_state["logged_in_vid"]
             st.info(f"Logged in as: {logged_vid} — {voters[logged_vid]['name']}")
-            # build choices
-            options = [f"{c['id']} - {c['name']}" for c in candidates]
-            selected = st.selectbox("Select Candidate", options, key="vote_select")
-            if st.button("Cast Vote"):
-                cand_id = selected.split(" - ")[0]
-                vote = {"voter_id": logged_vid, "candidate": cand_id, "timestamp": time.time()}
-                # create a new block with this vote and mine it
-                new_block = blockchain.new_votes_block([vote])
-                # mark voter as voted
-                voters[logged_vid]["voted"] = True
-                # persist immediately
-                persist(voters, blockchain)
+            # build choices only if candidates exist
+            if not candidates:
+                st.warning("No candidates available. Please ask admin to add candidates.json to the repo.")
+            else:
+                options = [f"{c['id']} - {c['name']}" for c in candidates]
+                selected = st.selectbox("Select Candidate", options, key="vote_select")
+                if st.button("Cast Vote"):
+                    cand_id = selected.split(" - ")[0]
+                    vote = {"voter_id": logged_vid, "candidate": cand_id, "timestamp": time.time()}
+                    # create a new block with this vote and mine it
+                    new_block = blockchain.new_votes_block([vote])
+                    # mark voter as voted
+                    voters[logged_vid]["voted"] = True
+                    # persist immediately
+                    persist(voters, blockchain)
 
-                st.success("Vote recorded and block mined ✅")
-                st.write("Latest block added (index, hash, votes):")
-                st.json({
-                    "index": new_block.index,
-                    "hash": new_block.hash,
-                    "votes": new_block.votes
-                })
-                # reload blockchain from disk to be safe (handles format mismatch)
-                reloaded = normalize_chain_data(load_json(CHAIN_PATH, None))
-                blockchain = SimpleBlockchain(reloaded)
-                # update session variable chain for display
-                st.session_state["blockchain_loaded_len"] = len(blockchain.chain)
+                    st.success("Vote recorded and block mined ✅")
+                    st.write("Latest block added (index, hash, votes):")
+                    st.json({
+                        "index": new_block.index,
+                        "hash": new_block.hash,
+                        "votes": new_block.votes
+                    })
+                    # reload blockchain from disk to be safe (handles format mismatch)
+                    reloaded = normalize_chain_data(load_json(CHAIN_PATH, None))
+                    blockchain = SimpleBlockchain(reloaded)
+                    # update session variable chain for display
+                    st.session_state["blockchain_loaded_len"] = len(blockchain.chain)
 
     st.markdown("---")
     st.subheader("Voting Results (live)")
@@ -160,40 +173,48 @@ if role == "Voter":
         st.info("No votes cast yet.")
 
 # -----------------------
-# Admin view
+# Admin view (form for reliable Enter behavior)
 elif role == "Admin":
     st.header("Admin Dashboard")
-    admin_pw = st.text_input("Admin password", type="password")
-    if admin_pw == "admin123":
-        st.subheader("Registered Voters")
-        if voters:
-            rows = []
-            for vid,info in voters.items():
-                rows.append({"Voter ID": vid, "name": info.get("name"), "voted": info.get("voted")})
-            st.table(rows)
-        else:
-            st.info("No voters registered.")
+    with st.form("admin_login_form"):
+        admin_pw = st.text_input("Admin password", type="password")
+        submit = st.form_submit_button("Sign in")
 
-        st.subheader("Blockchain Ledger")
-        # show chain JSON as object with key "chain" so UI looks nice
-        st.json({"chain": blockchain.to_dict()})
-        st.write("Chain valid:", blockchain.is_chain_valid())
-
-        if st.button("Tally Results (Admin)"):
-            results = tally_votes_from_chain(blockchain, candidates)
-            if results:
-                st.table([{ "Candidate": k, "Votes": v } for k,v in results.items()])
-                st.bar_chart({ k: v for k,v in results.items() })
+    if submit:
+        # accept both demo passwords and show admin UI
+        if admin_pw in {"admin123", "admin@123"}:
+            st.success("Admin authenticated")
+            st.subheader("Registered Voters")
+            if voters:
+                rows = []
+                for vid,info in voters.items():
+                    rows.append({"Voter ID": vid, "name": info.get("name"), "voted": info.get("voted")})
+                st.table(rows)
             else:
-                st.info("No votes recorded.")
+                st.info("No voters registered.")
 
-        if st.button("Reset Data (Demo)"):
-            save_json(VOTER_PATH, {})
-            bc_new = SimpleBlockchain()
-            save_json(CHAIN_PATH, bc_new.to_dict())
-            st.warning("Demo data reset. Refresh the page.")
+            st.subheader("Blockchain Ledger")
+            # show chain JSON as object with key "chain" so UI looks nice
+            st.json({"chain": blockchain.to_dict()})
+            st.write("Chain valid:", blockchain.is_chain_valid())
+
+            if st.button("Tally Results (Admin)"):
+                results = tally_votes_from_chain(blockchain, candidates)
+                if results:
+                    st.table([{ "Candidate": k, "Votes": v } for k,v in results.items()])
+                    st.bar_chart({ k: v for k,v in results.items() })
+                else:
+                    st.info("No votes recorded.")
+
+            if st.button("Reset Data (Demo)"):
+                save_json(VOTER_PATH, {})
+                bc_new = SimpleBlockchain()
+                save_json(CHAIN_PATH, bc_new.to_dict())
+                st.warning("Demo data reset. Refresh the page.")
+        else:
+            st.error("Incorrect admin password (demo: admin123 or admin@123)")
     else:
-        st.info("Enter admin password (demo: admin123)")
+        st.info("Enter admin password (demo: admin123 or admin@123)")
 
 # Ensure final persist (in case someone edited voter dict directly)
 persist(voters, blockchain)
