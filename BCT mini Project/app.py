@@ -173,48 +173,69 @@ if role == "Voter":
         st.info("No votes cast yet.")
 
 # -----------------------
-# Admin view (form for reliable Enter behavior)
+# Admin view (persist auth in session state)
 elif role == "Admin":
     st.header("Admin Dashboard")
-    with st.form("admin_login_form"):
-        admin_pw = st.text_input("Admin password", type="password")
-        submit = st.form_submit_button("Sign in")
 
-    if submit:
-        # accept both demo passwords and show admin UI
-        if admin_pw in {"admin123", "admin@123"}:
-            st.success("Admin authenticated")
-            st.subheader("Registered Voters")
-            if voters:
-                rows = []
-                for vid,info in voters.items():
-                    rows.append({"Voter ID": vid, "name": info.get("name"), "voted": info.get("voted")})
-                st.table(rows)
-            else:
-                st.info("No voters registered.")
+    # ensure admin_authenticated exists
+    if "admin_authenticated" not in st.session_state:
+        st.session_state["admin_authenticated"] = False
 
-            st.subheader("Blockchain Ledger")
-            # show chain JSON as object with key "chain" so UI looks nice
-            st.json({"chain": blockchain.to_dict()})
-            st.write("Chain valid:", blockchain.is_chain_valid())
+    # If already authenticated, show admin UI directly
+    if st.session_state["admin_authenticated"]:
+        st.success("Admin authenticated")
+        # Sign out option
+        if st.button("Sign out"):
+            st.session_state["admin_authenticated"] = False
+            st.experimental_rerun()
 
-            if st.button("Tally Results (Admin)"):
-                results = tally_votes_from_chain(blockchain, candidates)
-                if results:
-                    st.table([{ "Candidate": k, "Votes": v } for k,v in results.items()])
-                    st.bar_chart({ k: v for k,v in results.items() })
-                else:
-                    st.info("No votes recorded.")
-
-            if st.button("Reset Data (Demo)"):
-                save_json(VOTER_PATH, {})
-                bc_new = SimpleBlockchain()
-                save_json(CHAIN_PATH, bc_new.to_dict())
-                st.warning("Demo data reset. Refresh the page.")
+        st.subheader("Registered Voters")
+        if voters:
+            rows = []
+            for vid, info in voters.items():
+                rows.append({"Voter ID": vid, "name": info.get("name"), "voted": info.get("voted")})
+            st.table(rows)
         else:
-            st.error("Incorrect admin password (demo: admin123 or admin@123)")
+            st.info("No voters registered.")
+
+        st.subheader("Blockchain Ledger")
+        st.json({"chain": blockchain.to_dict()})
+        st.write("Chain valid:", blockchain.is_chain_valid())
+
+        # Tally button
+        if st.button("Tally Results (Admin)"):
+            results = tally_votes_from_chain(blockchain, candidates)
+            if results:
+                st.table([{ "Candidate": k, "Votes": v } for k,v in results.items()])
+                st.bar_chart({ k: v for k, v in results.items() })
+            else:
+                st.info("No votes recorded.")
+
+        # Reset (danger)
+        if st.button("Reset Data (Demo)"):
+            save_json(VOTER_PATH, {})
+            bc_new = SimpleBlockchain()
+            save_json(CHAIN_PATH, bc_new.to_dict())
+            st.warning("Demo data reset. Refresh the page.")
+            # reload app state to reflect reset
+            st.session_state["admin_authenticated"] = False
+            st.experimental_rerun()
+
     else:
-        st.info("Enter admin password (demo: admin123 or admin@123)")
+        # Not authenticated: show login form
+        with st.form("admin_login_form"):
+            admin_pw = st.text_input("Admin password", type="password")
+            submit = st.form_submit_button("Sign in")
+        if submit:
+            if admin_pw in {"admin123", "admin@123"}:
+                st.session_state["admin_authenticated"] = True
+                st.experimental_rerun()
+            else:
+                st.error("Incorrect admin password (demo: admin123 or admin@123)")
+        else:
+            st.info("Enter admin password (demo: admin123 or admin@123)")
+
 
 # Ensure final persist (in case someone edited voter dict directly)
 persist(voters, blockchain)
+
