@@ -1,4 +1,4 @@
-# app.py (modern UI) — improved voter-side chart + demo candidate images
+# app.py (fixed Altair properties: removed width=None)
 import streamlit as st
 import time
 import hashlib
@@ -70,17 +70,14 @@ if "admin_authenticated" not in st.session_state:
 candidates, voters, blockchain = load_state()
 
 # Provide demo images when candidate image is empty
-# Using pravatar (avatar generator). You can replace with your own hosted images.
 DEFAULT_AVATAR_BASE = "https://i.pravatar.cc/150?img="
-# Preassign images by index if empty
 for idx, c in enumerate(candidates):
     if not c.get("image"):
-        # choose a stable image number 1..70
         img_no = (idx % 70) + 1
         c["image"] = DEFAULT_AVATAR_BASE + str(img_no)
 
 # -----------------------
-# UI layout & CSS (kept minimal for brevity)
+# UI layout & CSS (kept minimal)
 st.set_page_config(page_title="SmartVote+ — Blockchain E-Voting", layout="wide")
 st.markdown("""
 <style>
@@ -123,10 +120,8 @@ if role == "Voter":
             st.info("No candidates available. Add candidates.json to the repo.")
         else:
             for c in candidates:
-                # show tile with image
                 cols = st.columns([0.14, 1])
                 with cols[0]:
-                    # st.image works for both local file paths and URLs
                     img_path = c.get("image", "")
                     try:
                         st.image(img_path, width=72)
@@ -168,43 +163,35 @@ if role == "Voter":
                     persist(voters, blockchain)
                     st.success("Vote recorded and block mined ✅")
                     st.json({"index": new_block.index, "hash": new_block.hash, "votes": new_block.votes})
-                    # refresh local blockchain
                     reloaded = normalize_chain_data(load_json(CHAIN_PATH, None))
                     blockchain = SimpleBlockchain(reloaded)
         st.markdown("</div>", unsafe_allow_html=True)
 
     # -----------------------
-    # Voting Results — improved chart
+    # Voting Results — improved chart (fixed .properties)
     st.markdown("<br>", unsafe_allow_html=True)
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.subheader("Voting Results (Live)")
 
-    results = tally_votes_from_chain(blockchain, candidates)  # dict {name: votes}
+    results = tally_votes_from_chain(blockchain, candidates)
     if results:
-        # build dataframe for altair
         df = pd.DataFrame(list(results.items()), columns=["candidate", "votes"])
-        # sort by votes descending
-        df = df.sort_values("votes", ascending=True)  # ascending True for horizontal bars bottom-to-top
-        # dynamic height: 70 px per candidate (minimum 200)
+        df = df.sort_values("votes", ascending=True)
         chart_height = max(200, 70 * len(df))
         alt_chart = alt.Chart(df).mark_bar().encode(
             x=alt.X("votes:Q", title="Votes"),
-            y=alt.Y("candidate:N", sort=alt.EncodingSortField(field="votes", op="sum", order="descending"), title="", axis=alt.Axis(labelFontSize=12)),
+            y=alt.Y("candidate:N", sort=alt.EncodingSortField(field="votes", op="sum", order="descending"), title=""),
             tooltip=["candidate", "votes"]
-        ).properties(height=chart_height, width=None).configure_axis(
-            labelFontSize=12,
-            titleFontSize=14
-        )
+        ).properties(height=chart_height)
         st.altair_chart(alt_chart, use_container_width=True)
 
-        # Right-side table for clarity
         st.table(df.sort_values("votes", ascending=False).reset_index(drop=True).rename(columns={"candidate":"Candidate","votes":"Votes"}))
     else:
         st.info("No votes cast yet.")
     st.markdown("</div>", unsafe_allow_html=True)
 
 # -----------------------
-# Admin UI (kept minimal — persistent auth)
+# Admin UI
 elif role == "Admin":
     st.markdown('<div class="card">', unsafe_allow_html=True)
     st.header("Admin Dashboard")
@@ -230,7 +217,6 @@ elif role == "Admin":
                 if results:
                     df = pd.DataFrame(list(results.items()), columns=["candidate","votes"]).sort_values("votes", ascending=False).reset_index(drop=True)
                     st.table(df.rename(columns={"candidate":"Candidate","votes":"Votes"}))
-                    # show the improved chart in admin too
                     chart_height = max(200, 70 * len(df))
                     alt_chart = alt.Chart(df).mark_bar().encode(
                         x=alt.X("votes:Q", title="Votes"),
